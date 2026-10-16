@@ -6,21 +6,23 @@ import '../models/personagem.dart';
 class PersonagemService{
   final FirebaseFirestore firestore = FirebaseFirestore.instance;
 
-  // UID do usuário logado
-  String get _uid => FirebaseAuth.instance.currentUser!.uid;
+  String get _uid {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      throw StateError('É necessário estar autenticado para acessar personagens.');
+    }
+    return user.uid;
+  }
 
-  CollectionReference<Map<String, dynamic>> get _colecao => firestore.collection('personagens');
+  CollectionReference<Map<String, dynamic>> get _colecao =>
+      firestore.collection('usuarios').doc(_uid).collection('personagens');
 
   Future<void> criarHeroi (Personagem p) async{
-    final dados = p.toMap();
-    dados['userId'] = _uid; // marca invisível do usuário que está criando personagem
-    await _colecao.add(dados);
+    await _colecao.add(p.toMap());
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> listarPersonagens(){
-    //return _colecao.snapshots(); //agora que há login, aqui muda para:
-    // a "peneira". Só irão aparecer os personagens do usuário logado
-    return _colecao.where('userId', isEqualTo: _uid).snapshots();
+    return _colecao.snapshots();
   }
 
   Future<void> tomarDano(String id, int novaVida) async{

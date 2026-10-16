@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crud/services/personagem_service.dart';
+import 'package:crud/services/missao_service.dart';
 import 'package:flutter/material.dart';
 
 import '../models/personagem.dart';
@@ -24,19 +25,23 @@ class _HomeScreenState extends State<HomeScreen> {
   final _auth = AuthService();
 
   final PersonagemService _service = PersonagemService();
+  final MissaoService _missaoService = MissaoService();
   final TextEditingController _nomeController = TextEditingController();
   final TextEditingController _vidaController = TextEditingController();
   final TextEditingController _forcaController = TextEditingController();
+  final TextEditingController _missaoController = TextEditingController();
+  bool _registrandoMissao = false;
 
   @override
-  void dispose(){
+  void dispose() {
     _nomeController.dispose();
     _vidaController.dispose();
     _forcaController.dispose();
+    _missaoController.dispose();
     super.dispose();
   }
 
-  Future<void> _criarHeroi() async{
+  Future<void> _criarHeroi() async {
     final nome = _nomeController.text.trim();
     if (nome.isEmpty) return;
 
@@ -50,7 +55,30 @@ class _HomeScreenState extends State<HomeScreen> {
     _nomeController.clear();
   }
 
-  Future<void> _atacar(Personagem p) async{
+  Future<void> _registrarMissao() async {
+    final titulo = _missaoController.text.trim();
+    if (titulo.isEmpty || _registrandoMissao) return;
+
+    setState(() => _registrandoMissao = true);
+    try {
+      await _missaoService.registrarMissaoConcluida(titulo);
+      _missaoController.clear();
+    } on FirebaseException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Não foi possível registrar a missão: ${error.message ?? error.code}',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _registrandoMissao = false);
+    }
+  }
+
+  Future<void> _atacar(Personagem p) async {
     final novaVida = (p.vida! - 20).clamp(0, 9999);
     await _service.tomarDano(p.id!, novaVida);
   }
@@ -76,26 +104,150 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF2A1D12), _fundo],
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        body: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF2A1D12), _fundo],
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              _cabecalho(),
-              _formulario(),
-              _tituloSecao('⚔  LISTA DE HERÓIS  ⚔'),
-              Expanded(child: _listaHerois()),
-            ],
+          child: SafeArea(
+            child: Column(
+              children: [
+                _cabecalho(),
+                const TabBar(
+                  labelColor: _ouro,
+                  unselectedLabelColor: _borda,
+                  indicatorColor: _ouro,
+                  tabs: [
+                    Tab(icon: Icon(Icons.shield), text: 'HERÓIS'),
+                    Tab(icon: Icon(Icons.flag), text: 'MISSÕES'),
+                  ],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      Column(
+                        children: [
+                          _formulario(),
+                          _tituloSecao('⚔  LISTA DE HERÓIS  ⚔'),
+                          Expanded(child: _listaHerois()),
+                        ],
+                      ),
+                      Column(
+                        children: [
+                          _formularioMissao(),
+                          _tituloSecao('✦  MISSÕES CONCLUÍDAS  ✦'),
+                          Expanded(child: _listaMissoes()),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _formularioMissao() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _pergaminho,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _borda, width: 2),
+      ),
+      child: Column(
+        children: [
+          TextField(
+            controller: _missaoController,
+            style: const TextStyle(color: _textoClaro),
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _registrarMissao(),
+            decoration: const InputDecoration(
+              labelText: 'Nome da missão concluída',
+              prefixIcon: Icon(Icons.flag, color: _ouro),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 46,
+            child: ElevatedButton.icon(
+              onPressed: _registrandoMissao ? null : _registrarMissao,
+              icon: const Icon(Icons.check_circle_outline),
+              label: Text(
+                _registrandoMissao ? 'REGISTRANDO...' : 'REGISTRAR CONCLUSÃO',
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF8B1E1E),
+                foregroundColor: _textoClaro,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _listaMissoes() {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _missaoService.listarMissoes(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Erro ao carregar missões: ${snapshot.error}',
+              style: const TextStyle(color: Colors.redAccent),
+              textAlign: TextAlign.center,
+            ),
+          );
+        }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator(color: _ouro));
+        }
+
+        final docs = snapshot.data?.docs ?? [];
+        if (docs.isEmpty) {
+          return const Center(
+            child: Text(
+              'Nenhuma missão concluída registrada.',
+              style: TextStyle(color: _borda, fontStyle: FontStyle.italic),
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.only(bottom: 16),
+          itemCount: docs.length,
+          itemBuilder: (context, index) {
+            final missao = docs[index].data();
+            return Card(
+              color: _pergaminho,
+              margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+              child: ListTile(
+                leading: const Icon(Icons.check_circle, color: _ouro),
+                title: Text(
+                  missao['titulo'] as String? ?? '',
+                  style: const TextStyle(color: _textoClaro),
+                ),
+                subtitle: const Text(
+                  'Missão concluída',
+                  style: TextStyle(color: _borda),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -127,11 +279,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 height: 2,
                 width: 140,
                 decoration: const BoxDecoration(
-                  gradient: LinearGradient(colors: [
-                    Colors.transparent,
-                    _ouro,
-                    Colors.transparent,
-                  ]),
+                  gradient: LinearGradient(
+                    colors: [Colors.transparent, _ouro, Colors.transparent],
+                  ),
                 ),
               ),
             ],
@@ -246,8 +396,10 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return Center(
-            child: Text('Erro: ${snapshot.error}',
-                style: const TextStyle(color: Colors.redAccent)),
+            child: Text(
+              'Erro: ${snapshot.error}',
+              style: const TextStyle(color: Colors.redAccent),
+            ),
           );
         }
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -260,7 +412,10 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Text(
               'A coleção aguarda seu primeiro herói...',
               style: TextStyle(
-                  color: _borda, fontStyle: FontStyle.italic, fontSize: 15),
+                color: _borda,
+                fontStyle: FontStyle.italic,
+                fontSize: 15,
+              ),
             ),
           );
         }
@@ -336,17 +491,25 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 2),
                       Row(
                         children: [
-                          const Icon(Icons.fitness_center,
-                              size: 14, color: _ouro),
+                          const Icon(
+                            Icons.fitness_center,
+                            size: 14,
+                            color: _ouro,
+                          ),
                           const SizedBox(width: 4),
-                          Text('STR ${p.forca}',
-                              style: const TextStyle(color: _ouro)),
+                          Text(
+                            'STR ${p.forca}',
+                            style: const TextStyle(color: _ouro),
+                          ),
                           if (morto) ...[
                             const SizedBox(width: 10),
-                            const Text('☠ CAÍDO',
-                                style: TextStyle(
-                                    color: Colors.redAccent,
-                                    fontWeight: FontWeight.bold)),
+                            const Text(
+                              '☠ CAÍDO',
+                              style: TextStyle(
+                                color: Colors.redAccent,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ],
                         ],
                       ),
@@ -405,7 +568,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.redAccent,
                       side: BorderSide(
-                          color: morto ? Colors.grey : Colors.redAccent),
+                        color: morto ? Colors.grey : Colors.redAccent,
+                      ),
                     ),
                   ),
                 ),
@@ -425,8 +589,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 IconButton(
                   tooltip: 'Matar personagem',
                   onPressed: () => _service.deletarPersonagem(p.id!),
-                  icon: const Icon(Icons.delete_forever,
-                      color: Colors.redAccent),
+                  icon: const Icon(
+                    Icons.delete_forever,
+                    color: Colors.redAccent,
+                  ),
                 ),
               ],
             ),
